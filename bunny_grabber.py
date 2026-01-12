@@ -38,6 +38,25 @@ else:
 
 commands_list = []
 
+get_media_playlist_js = """
+async (masterPlaylistUrl) => {
+    const response = await fetch(masterPlaylistUrl);
+    const masterPlaylistContent = await response.text();
+
+    let mediaPlaylistUrl = null;
+    for (const line of masterPlaylistContent.trim().split('\\n')) {
+        if (line.trim() && !line.startsWith("#")) {
+            // Construct full URL from relative path
+            mediaPlaylistUrl = new URL(line.trim(), masterPlaylistUrl).href;
+            break;
+        }
+    }
+
+    const mediaResponse = await fetch(mediaPlaylistUrl);
+    return await mediaResponse.text();
+}
+"""
+
 print("--- Starting URL Processing ---")
 with sync_playwright() as p:
     browser = p.firefox.launch(
@@ -51,11 +70,11 @@ with sync_playwright() as p:
         print("Processing:", page_url)
         page = context.new_page()
         state = {"hex_key": None, "playlist_url": None, "title": None}
+        cmd = None
 
         def on_response(response):
             if "b-cdn.net" in response.url and "/key/" in response.url:
-                try:
-                    state["hex_key"] = response.body().hex()
+                try: state["hex_key"] = response.body().hex()
                 except Exception: pass
 
         def on_request(request):
@@ -67,26 +86,63 @@ with sync_playwright() as p:
 
         try:
             page.goto(page_url, wait_until="domcontentloaded", timeout=60000, referer="https://iframe.mediadelivery.net/")
-            state["title"] = sanitize_filename(page.title())
+            page_title = page.title()
+            if page_title and page_title.strip():
+                state["title"] = sanitize_filename(page_title)
         except Exception as e:
-            print("Error loading page:", e)
+            print(f"Error loading page: {e}")
             page.close()
             continue
 
         max_wait, elapsed = 15, 0
-        while (not state["hex_key"] or not state["playlist_url"]) and elapsed < max_wait:
+        while not state["playlist_url"] and elapsed < max_wait:
             page.wait_for_timeout(500)
             elapsed += 0.5
 
-        if state["hex_key"] and state["playlist_url"]:
-            cmd = (
-                f'N_M3U8DL-RE --save-name "{state["title"]}" -sv best --custom-hls-key "{state["hex_key"]}" '
-                f'"{state["playlist_url"]}" --header "Referer: https://iframe.mediadelivery.net/"'
-            )
-            print("\nKEY FOUND! Command generated.")
-            commands_list.append(cmd)
+        if not state["playlist_url"]:
+            print("Could not find a master playlist (.m3u8) on this page.")
+            page.close()
+            continue
+        
+        try:
+            print("Found master playlist. Fetching content to check for DRM...")
+            media_playlist_content = page.evaluate(get_media_playlist_js, state["playlist_url"])
+        except Exception as e:
+            print(f"Failed to fetch or parse playlist content: {e}")
+            page.close()
+            continue
+            
+        is_drm = "#EXT-X-KEY" in media_playlist_content
+        
+        cmd_parts = ["N_M3U8DL-RE"]
+        if state["title"]:
+            cmd_parts.append(f'--save-name "{state["title"]}"')
+        cmd_parts.append("-sv best")
+
+        if is_drm:
+            print("DRM protected video detected. Waiting for key...")
+            key_wait_max, key_elapsed = 5, 0
+            while not state["hex_key"] and key_elapsed < key_wait_max:
+                page.wait_for_timeout(500)
+                key_elapsed += 0.5
+            
+            if state["hex_key"]:
+                print("Encryption key found!")
+                cmd_parts.append(f'--custom-hls-key "{state["hex_key"]}"')
+                cmd_parts.append(f'"{state["playlist_url"]}"')
+                cmd_parts.append('--header "Referer: https://iframe.mediadelivery.net/"')
+                cmd = " ".join(cmd_parts)
+            else:
+                print("Error: Found DRM playlist but could not capture the encryption key.")
         else:
-            print("No BunnyCDN video found:", page_url)
+            print("Non-DRM video detected.")
+            cmd_parts.append(f'"{state["playlist_url"]}"')
+            cmd_parts.append('--header "Referer: https://iframe.mediadelivery.net/"')
+            cmd = " ".join(cmd_parts)
+        
+        if cmd:
+            commands_list.append(cmd)
+            print("Command generated successfully.")
         
         page.close()
     browser.close()
