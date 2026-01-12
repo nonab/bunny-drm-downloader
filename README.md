@@ -58,7 +58,7 @@ The script can be run with a single URL or a path to a text file.
 
 -   **From a single URL**:
     ```sh
-    python bunny_grabber.py "https://your-video-page-url.com"
+    python bunny_grabber.py "https://iframe.mediadelivery.net/embed/00000/00000000-0000-0000-0000-000000000000)"
     ```
 
 -   **From a file containing multiple URLs**:
