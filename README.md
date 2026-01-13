@@ -1,8 +1,8 @@
 # Bunny CDN DRM Video Downloader
 
-A command-line tool to automatically download DRM-protected videos hosted on Bunny CDN.
+A command-line tool to automatically download videos hosted on Bunny CDN (DRM-protected and not).
 
-This script automates the process by visiting a webpage, extracting the `.m3u8` playlist and the decryption key, and then uses `N_M3U8DL-RE` to download the video.
+This script automates the process by visiting a webpage, extracting the `.m3u8` playlist, checks if video is encrypted and if it is, extracts the decryption key, and then uses `N_M3U8DL-RE` to download the video.
 
 ## Features
 
